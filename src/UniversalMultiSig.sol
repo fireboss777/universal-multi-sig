@@ -30,14 +30,13 @@ contract UniversalMultiSig is IUniversalMultiSig, ERC1155Holder, IERC721Receiver
     mapping(bytes32 => bool) internal _isOwner;
 
     /// @notice A mapping that tracks whether a specific transaction has been approved by any owner.
-    /// @dev This mapping uses a bytes32 key representing the transaction hash to store a boolean
-    /// value indicating if the transaction is approved (true) or not (false) by the owners.
-    mapping(bytes32 => bool) internal _isOwnerTxApproved;
+    /// @dev Keys are scoped by owners version: an ownership update implicitly revokes every
+    /// approval made under previous versions, as the old version entries are never read again.
+    mapping(uint256 => mapping(bytes32 => bool)) internal _isOwnerTxApproved;
 
     /// @notice A mapping that counts the number of approvals for each transaction hash.
-    /// @dev This mapping uses a bytes32 key (transaction hash) and stores the count of approvals
-    /// from the owners. This is critical for determining if a transaction can proceed to execution.
-    mapping(bytes32 => uint256) internal _ownersTxApprovalsCount;
+    /// @dev Keys are scoped by owners version, see `_isOwnerTxApproved`.
+    mapping(uint256 => mapping(bytes32 => uint256)) internal _ownersTxApprovalsCount;
 
     /// @notice A mapping that maintains a delegation nonce for each owner address.
     /// @dev This mapping tracks the number of times an owner has delegated their authority.
@@ -82,16 +81,17 @@ contract UniversalMultiSig is IUniversalMultiSig, ERC1155Holder, IERC721Receiver
     /// @notice Constructor of the UniversalMultiSig contract and initializes the owners.
     /// @param owners An array of addresses that represent the owners of the multisig contract.
     /// @dev This constructor requires a minimum number of owners as defined by the `MIN_OWNER_COUNT`.
-    /// It checks that the provided owners array is not empty and that none of the addresses are zero.
+    /// It checks that the provided owners array is not empty, that none of the addresses are zero,
+    /// and that the contract itself is not set as an owner.
     /// If the validation checks fail, it reverts the transaction with the respective error.
-    /// Finally, it sets the `_owners` state variable to the provided array and emits the `OwnersUpdated` event.
+    /// Finally, it registers the provided owners under version 0 and emits the `OwnersUpdated` event.
     constructor(address[] memory owners) EIP712("UniversalMultiSig", "1") {
         if (owners.length < MIN_OWNER_COUNT) {
             revert InvalidOwnersCount();
         }
 
         for (uint256 i; i < owners.length;) {
-            if (owners[i] == address(0)) {
+            if (owners[i] == address(0) || owners[i] == address(this)) {
                 revert InvalidOwner();
             }
 
@@ -130,16 +130,17 @@ contract UniversalMultiSig is IUniversalMultiSig, ERC1155Holder, IERC721Receiver
 
     /// @inheritdoc IUniversalMultiSig
     function revokeTx(bytes32 txHash) external {
+        uint256 version = _ownersVersion;
         bytes32 ownerTxApprovalHash = _getOwnerTxApprovalHash(txHash, msg.sender);
-        bool isTxApproved = _isOwnerTxApproved[ownerTxApprovalHash];
+        bool isTxApproved = _isOwnerTxApproved[version][ownerTxApprovalHash];
 
         if (!isTxApproved) {
             revert NotApproved();
         }
 
-        delete _isOwnerTxApproved[ownerTxApprovalHash];
+        delete _isOwnerTxApproved[version][ownerTxApprovalHash];
         unchecked {
-            _ownersTxApprovalsCount[txHash] -= 1;
+            _ownersTxApprovalsCount[version][txHash] -= 1;
         }
 
         emit TxRevoked(msg.sender, txHash);
@@ -158,7 +159,7 @@ contract UniversalMultiSig is IUniversalMultiSig, ERC1155Holder, IERC721Receiver
         uint256 version = _ownersVersion + 1;
 
         for (uint256 i; i < owners.length;) {
-            if (owners[i] == address(0)) {
+            if (owners[i] == address(0) || owners[i] == address(this)) {
                 revert InvalidOwner();
             }
 
@@ -209,6 +210,10 @@ contract UniversalMultiSig is IUniversalMultiSig, ERC1155Holder, IERC721Receiver
             revert UnauthorizedTx();
         }
 
+        // Effects before interactions: consume the nonce so a reentrant call made from a
+        // target cannot recompute the same txHash and replay the recorded approvals.
+        _txNonce = txNonce + 1;
+
         // Executes the transaction
         for (uint256 i; i < targets.length;) {
             if (targets[i] == address(0)) {
@@ -225,9 +230,6 @@ contract UniversalMultiSig is IUniversalMultiSig, ERC1155Holder, IERC721Receiver
         }
 
         emit TxExecuted(msg.sender, txHash_, txNonce);
-
-        // Incremente the transaction
-        _txNonce += 1;
     }
 
     /* -------------------------------------------------------------------------- */
@@ -256,7 +258,7 @@ contract UniversalMultiSig is IUniversalMultiSig, ERC1155Holder, IERC721Receiver
 
     /// @inheritdoc IUniversalMultiSig
     function getOwnersTxApprovalsCount(bytes32 txHash) external view returns (uint256) {
-        return _ownersTxApprovalsCount[txHash];
+        return _ownersTxApprovalsCount[_ownersVersion][txHash];
     }
 
     /// @inheritdoc IUniversalMultiSig
@@ -277,7 +279,7 @@ contract UniversalMultiSig is IUniversalMultiSig, ERC1155Holder, IERC721Receiver
     /// @inheritdoc IUniversalMultiSig
     function isAuthorizedTx(bytes32 txHash) public view returns (bool approved_) {
         uint256 ownersCount = _ownersCount;
-        uint256 ownersApprovalsCount = _ownersTxApprovalsCount[txHash];
+        uint256 ownersApprovalsCount = _ownersTxApprovalsCount[_ownersVersion][txHash];
 
         if (ownersCount % 2 == 0) {
             return ownersApprovalsCount > ownersCount / 2;
@@ -288,7 +290,7 @@ contract UniversalMultiSig is IUniversalMultiSig, ERC1155Holder, IERC721Receiver
 
     /// @inheritdoc IUniversalMultiSig
     function isOwnerTxApproved(bytes32 txHash, address owner) external view returns (bool) {
-        return _isOwnerTxApproved[_getOwnerTxApprovalHash(txHash, owner)];
+        return _isOwnerTxApproved[_ownersVersion][_getOwnerTxApprovalHash(txHash, owner)];
     }
     /// @inheritdoc IUniversalMultiSig
 
@@ -364,15 +366,16 @@ contract UniversalMultiSig is IUniversalMultiSig, ERC1155Holder, IERC721Receiver
     /// @param txHash The hash of the transaction to be approved.
     /// @param owner The address of the owner approving the transaction.
     function _approveTx(bytes32 txHash, address owner) internal {
+        uint256 version = _ownersVersion;
         bytes32 ownerTxApprovalHash = _getOwnerTxApprovalHash(txHash, owner);
-        bool isTxApproved = _isOwnerTxApproved[ownerTxApprovalHash];
+        bool isTxApproved = _isOwnerTxApproved[version][ownerTxApprovalHash];
 
         if (isTxApproved) {
             revert AlreadyApproved();
         }
 
-        _isOwnerTxApproved[ownerTxApprovalHash] = true;
-        _ownersTxApprovalsCount[txHash] += 1;
+        _isOwnerTxApproved[version][ownerTxApprovalHash] = true;
+        _ownersTxApprovalsCount[version][txHash] += 1;
 
         emit TxApproved(owner, msg.sender, txHash);
     }

@@ -4,11 +4,48 @@ pragma solidity ^0.8.0;
 import { MessageHashUtils } from "@openzeppelin/contracts/utils/cryptography/MessageHashUtils.sol";
 import { IERC721Receiver } from "@openzeppelin/contracts/token/ERC721/IERC721Receiver.sol";
 
+import { UniversalMultiSig } from "../src/UniversalMultiSig.sol";
 import { IUniversalMultiSigEvents as Events } from "../src/interfaces/IUniversalMultiSig.sol";
 import { IUniversalMultiSigErrors as Errors } from "../src/interfaces/IUniversalMultiSigErrors.sol";
 
 import { UniversalMultiSigFixture } from "./utils/Fixture.sol";
 import { UniversalMultiSigHandler } from "./utils/Handler.sol";
+
+contract ReentrantOwner {
+    UniversalMultiSig public multisig;
+    bytes public payload;
+    bool public attempted;
+    bytes public reentrancyError;
+
+    function setMultisig(UniversalMultiSig multisig_) external {
+        multisig = multisig_;
+    }
+
+    function setPayload(bytes memory payload_) external {
+        payload = payload_;
+    }
+
+    function execute() external {
+        (bool success, bytes memory reason) = address(multisig).call(payload);
+        if (!success) {
+            assembly ("memory-safe") {
+                revert(add(reason, 0x20), mload(reason))
+            }
+        }
+    }
+
+    receive() external payable {
+        if (attempted) return;
+        attempted = true;
+
+        (bool success, bytes memory reason) = address(multisig).call(payload);
+        if (success) {
+            revert("reentrancy succeeded");
+        } else {
+            reentrancyError = reason;
+        }
+    }
+}
 
 contract UniversalMultiSigTest is UniversalMultiSigFixture {
     uint256 internal constant BASE_AMOUNT = 1 ether;
@@ -53,6 +90,18 @@ contract UniversalMultiSigTest is UniversalMultiSigFixture {
         assertEq(OWNERS.length, multisig.MIN_OWNER_COUNT());
         vm.expectRevert(Errors.InvalidOwner.selector);
         new UniversalMultiSigHandler(OWNERS);
+    }
+
+    function test_RevertWhen_constructorInvalidOwnerSelf() external {
+        address predicted = computeCreateAddress(address(this), vm.getNonce(address(this)));
+
+        address[] memory owners = new address[](3);
+        owners[0] = USER_1;
+        owners[1] = USER_2;
+        owners[2] = predicted;
+
+        vm.expectRevert(Errors.InvalidOwner.selector);
+        new UniversalMultiSigHandler(owners);
     }
 
     /* -------------------------------------------------------------------------- */
@@ -201,6 +250,45 @@ contract UniversalMultiSigTest is UniversalMultiSigFixture {
         multisig.revokeTx(txHash);
     }
 
+    function test_RevertWhen_revokeTxAfterUpdateOwners() external {
+        (address[] memory targets, uint256[] memory values, bytes[] memory datas) =
+            _getTransferEthTx(address(this), BASE_AMOUNT);
+
+        bytes32 txHash = multisig.getTxHash(targets, values, datas, multisig.getTxNonce());
+
+        vm.prank(OWNERS[0]);
+        multisig.approveTx(txHash);
+        assertTrue(multisig.isOwnerTxApproved(txHash, OWNERS[0]));
+
+        /* ------------------------------ rotate owners ------------------------------ */
+
+        address[] memory newOwners = new address[](3);
+        newOwners[0] = USER_4;
+        newOwners[1] = vm.addr(type(uint160).max);
+        newOwners[2] = vm.addr(type(uint160).max - 1);
+
+        (address[] memory uTargets, uint256[] memory uValues, bytes[] memory uDatas) =
+            _getUpdateOwnersTx(newOwners);
+        bytes32 updateTxHash =
+            multisig.getTxHash(uTargets, uValues, uDatas, multisig.getTxNonce());
+
+        vm.prank(OWNERS[0]);
+        multisig.approveTx(updateTxHash);
+        vm.prank(OWNERS[1]);
+        multisig.approveTx(updateTxHash);
+
+        vm.prank(OWNERS[0]);
+        multisig.universalTx(uTargets, uValues, uDatas, new bytes[](0));
+
+        /* -------------------- ex-owner revoke is now a no-op --------------------- */
+
+        assertFalse(multisig.isOwnerTxApproved(txHash, OWNERS[0]));
+
+        vm.prank(OWNERS[0]);
+        vm.expectRevert(Errors.NotApproved.selector);
+        multisig.revokeTx(txHash);
+    }
+
     /* -------------------------------------------------------------------------- */
     /*                                UPDATE_OWNERS                               */
     /* -------------------------------------------------------------------------- */
@@ -333,6 +421,99 @@ contract UniversalMultiSigTest is UniversalMultiSigFixture {
         multisig.universalTx(targets, values, datas, new bytes[](0));
     }
 
+    function test_RevertWhen_updateOwnersInvalidOwnerSelf() external {
+        address[] memory newOwners = new address[](3);
+        newOwners[0] = USER_1;
+        newOwners[1] = USER_2;
+        newOwners[2] = address(multisig);
+
+        (address[] memory targets, uint256[] memory values, bytes[] memory datas) =
+            _getUpdateOwnersTx(newOwners);
+
+        bytes32 txHash = multisig.getTxHash(targets, values, datas, multisig.getTxNonce());
+
+        for (uint256 i; i < OWNERS.length; i++) {
+            vm.prank(OWNERS[i]);
+            multisig.approveTx(txHash);
+
+            if (multisig.isAuthorizedTx(txHash)) {
+                break;
+            }
+        }
+
+        vm.prank(OWNERS[0]);
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                Errors.TxFailed.selector, abi.encodePacked(Errors.InvalidOwner.selector)
+            )
+        );
+        multisig.universalTx(targets, values, datas, new bytes[](0));
+    }
+
+    function test_updateOwnersInvalidatesPreApprovedFutureTx() external {
+        vm.deal(address(multisig), BASE_AMOUNT * 2);
+        (address[] memory targets, uint256[] memory values, bytes[] memory datas) =
+            _getTransferEthTx(address(this), BASE_AMOUNT);
+
+        // Pre-approve the payload for the NEXT nonce: the upcoming rotation will consume
+        // the current nonce, making the future nonce predictable.
+        uint256 futureNonce = multisig.getTxNonce() + 1;
+        bytes32 futureTxHash = multisig.getTxHash(targets, values, datas, futureNonce);
+
+        vm.prank(OWNERS[0]);
+        multisig.approveTx(futureTxHash);
+        vm.prank(OWNERS[1]);
+        multisig.approveTx(futureTxHash);
+        assertTrue(multisig.isAuthorizedTx(futureTxHash));
+
+        /* ------------------------------ rotate owners ------------------------------ */
+
+        address[] memory newOwners = new address[](3);
+        newOwners[0] = USER_4;
+        newOwners[1] = vm.addr(type(uint160).max);
+        newOwners[2] = vm.addr(type(uint160).max - 1);
+
+        (address[] memory uTargets, uint256[] memory uValues, bytes[] memory uDatas) =
+            _getUpdateOwnersTx(newOwners);
+        bytes32 updateTxHash =
+            multisig.getTxHash(uTargets, uValues, uDatas, multisig.getTxNonce());
+
+        vm.prank(OWNERS[0]);
+        multisig.approveTx(updateTxHash);
+        vm.prank(OWNERS[1]);
+        multisig.approveTx(updateTxHash);
+
+        vm.prank(OWNERS[0]);
+        multisig.universalTx(uTargets, uValues, uDatas, new bytes[](0));
+
+        /* ------------------ pre-approvals from removed owners are void ------------------ */
+
+        assertFalse(multisig.isAuthorizedTx(futureTxHash));
+        assertEq(multisig.getOwnersTxApprovalsCount(futureTxHash), 0);
+
+        vm.prank(newOwners[0]);
+        vm.expectRevert(Errors.UnauthorizedTx.selector);
+        multisig.universalTx(targets, values, datas, new bytes[](0));
+
+        /* ------------------- the new owners must re-approve from scratch ------------------- */
+
+        vm.prank(newOwners[0]);
+        multisig.approveTx(futureTxHash);
+        assertFalse(multisig.isAuthorizedTx(futureTxHash));
+
+        uint256 balanceBefore = address(this).balance;
+
+        vm.prank(newOwners[1]);
+        multisig.approveTx(futureTxHash);
+        assertTrue(multisig.isAuthorizedTx(futureTxHash));
+
+        vm.prank(newOwners[0]);
+        multisig.universalTx(targets, values, datas, new bytes[](0));
+
+        assertEq(address(this).balance, balanceBefore + BASE_AMOUNT);
+        assertEq(multisig.getTxNonce(), futureNonce + 1);
+    }
+
     /* -------------------------------------------------------------------------- */
     /*                                UNIVERSAL_TX                                */
     /* -------------------------------------------------------------------------- */
@@ -397,6 +578,57 @@ contract UniversalMultiSigTest is UniversalMultiSigFixture {
         vm.prank(OWNERS[0]);
         vm.expectRevert(Errors.UnauthorizedTx.selector);
         multisig.universalTx(targets, values, datas, new bytes[](0));
+    }
+
+    function test_universalTxBlocksReentrancy() external {
+        ReentrantOwner attacker = new ReentrantOwner();
+
+        address[] memory owners = new address[](3);
+        owners[0] = USER_1;
+        owners[1] = USER_2;
+        owners[2] = address(attacker);
+
+        UniversalMultiSigHandler localMultisig = new UniversalMultiSigHandler(owners);
+        attacker.setMultisig(UniversalMultiSig(payable(address(localMultisig))));
+        vm.deal(address(localMultisig), BASE_AMOUNT);
+
+        (address[] memory targets, uint256[] memory values, bytes[] memory datas) =
+            _getTransferEthTx(address(attacker), BASE_AMOUNT);
+
+        uint256 txNonce = localMultisig.getTxNonce();
+        bytes32 txHash = localMultisig.getTxHash(targets, values, datas, txNonce);
+
+        vm.prank(USER_1);
+        localMultisig.approveTx(txHash);
+        vm.prank(USER_2);
+        localMultisig.approveTx(txHash);
+        assertTrue(localMultisig.isAuthorizedTx(txHash));
+
+        attacker.setPayload(
+            abi.encodeWithSignature(
+                "universalTx(address[],uint256[],bytes[],bytes[])",
+                targets,
+                values,
+                datas,
+                new bytes[](0)
+            )
+        );
+
+        uint256 balanceBefore = address(attacker).balance;
+
+        attacker.execute();
+
+        // The reentrant call was attempted and rejected: the nonce was consumed
+        // before the external interaction, so the replayed payload hashes differently.
+        assertTrue(attacker.attempted());
+        assertEq(
+            keccak256(attacker.reentrancyError()),
+            keccak256(abi.encodeWithSelector(Errors.UnauthorizedTx.selector))
+        );
+
+        // Funds moved exactly once and the nonce advanced once.
+        assertEq(address(attacker).balance, balanceBefore + BASE_AMOUNT);
+        assertEq(localMultisig.getTxNonce(), txNonce + 1);
     }
 
     function test_universalTxWithDelegation() external {

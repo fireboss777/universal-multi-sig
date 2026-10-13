@@ -9,7 +9,8 @@ The Universal Multi-Sig contract is a secure multi-signature wallet implementati
 - **Multi-Signature Approval**: Requires consensus from multiple owners to approve and execute transactions.
 - **Delegated Approvals**: Owners can delegate their approval rights to others, allowing flexibility in managing approvals.
 - **Reversible Transaction Approval**: Owners can revoke their approval for a specific transaction.
-- **Secure Ownership Management**: Only recognized owners can execute transactions or modify ownership.
+- **Secure Ownership Management**: Only recognized owners can execute transactions or modify ownership. The contract itself (`address(this)`) can never be set as an owner.
+- **Version-Scoped Approvals**: Transaction approvals are scoped to the owners version that granted them. Any ownership update implicitly revokes every pending approval; the new owners must re-approve from scratch.
 - **Event Logging**: All key actions are logged with events for transparency and accountability.
 
 ## Smart Contract Details
@@ -25,12 +26,12 @@ The Universal Multi-Sig contract is a secure multi-signature wallet implementati
 
 ### State Variables
 - **_isOwner**: Mapping to track recognized owners.
-- **_isOwnerTxApproved**: Mapping to track transaction approvals by each owner.
-- **_ownersTxApprovalsCount**: Mapping to count approvals for each transaction hash.
+- **_isOwnerTxApproved**: Mapping to track transaction approvals by per-owner, scoped by owners version.
+- **_ownersTxApprovalsCount**: Mapping to count approvals for each transaction hash, scoped by owners version.
 - **_ownerDelegationNonce**: Mapping to prevent replay attacks on delegated approvals.
 - **_ownersVersion**: Keeps track of the version number for the ownership list.
 - **_ownersCount**: Total count of current owners.
-- **_txNonce**: Ensures each transaction is unique.
+- **_txNonce**: Ensures each transaction is unique. Consumed before external calls to prevent replay via reentrancy.
 
 ### Events
 - **OwnersUpdated(address[] owners, uint256 version)**: Emits when the list of owners is updated.
@@ -76,7 +77,7 @@ The Universal Multi-Sig contract is a secure multi-signature wallet implementati
 
 4. **Executing Transactions**: To execute a batch of transactions, owners call `universalTx(...)` with required parameters, ensuring all conditions for approval are met.
 
-5. **Updating Owners**: To change the list of owners, the `updateOwners()` function can be called, but it can only be invoked internally by the contract itself.
+5. **Updating Owners**: To change the list of owners, the `updateOwners()` function can be called, but it can only be invoked internally by the contract itself. Rotating the owner set invalidates all pending approvals made under the previous version.
 
 ## Important Notes
 

@@ -46,8 +46,10 @@ interface IUniversalMultiSig is IUniversalMultiSigErrors, IUniversalMultiSigEven
     /// @notice Updates the list of owners for the multi-signature wallet.
     /// @dev This function can only be called by a owner of the contract through `universalTx` as
     /// any external transaction. It replaces the existing owners with a new set of owner addresses provided
-    /// in the `owners` array. Care must be taken to ensure that the new list of owners is valid, as it will
+    /// in the `owners` array. Care must be taken to ensure that the new list of owner addresses is valid, as it will
     /// determine the new approval authority for future transactions.
+    /// All transaction approvals recorded under previous owners versions are implicitly revoked:
+    /// pending transactions must be re-approved by the new owners before they can be executed.
     /// @param owners An array of addresses representing the new owners of the contract.
     /// It must not be empty, and all addresses must be unique.
     function updateOwners(address[] calldata owners) external;
