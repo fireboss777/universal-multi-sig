@@ -285,8 +285,7 @@ contract UniversalMultiSigTest is UniversalMultiSigFixture {
 
         (address[] memory uTargets, uint256[] memory uValues, bytes[] memory uDatas) =
             _getUpdateOwnersTx(newOwners);
-        bytes32 updateTxHash =
-            multisig.getTxHash(uTargets, uValues, uDatas, multisig.getTxNonce());
+        bytes32 updateTxHash = multisig.getTxHash(uTargets, uValues, uDatas, multisig.getTxNonce());
 
         vm.prank(OWNERS[0]);
         multisig.approveTx(updateTxHash);
@@ -491,8 +490,7 @@ contract UniversalMultiSigTest is UniversalMultiSigFixture {
 
         (address[] memory uTargets, uint256[] memory uValues, bytes[] memory uDatas) =
             _getUpdateOwnersTx(newOwners);
-        bytes32 updateTxHash =
-            multisig.getTxHash(uTargets, uValues, uDatas, multisig.getTxNonce());
+        bytes32 updateTxHash = multisig.getTxHash(uTargets, uValues, uDatas, multisig.getTxNonce());
 
         vm.prank(OWNERS[0]);
         multisig.approveTx(updateTxHash);
