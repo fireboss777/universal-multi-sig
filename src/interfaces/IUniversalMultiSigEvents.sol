@@ -2,25 +2,16 @@
 pragma solidity ^0.8.0;
 
 interface IUniversalMultiSigEvents {
-    /// @notice Emitted when a transaction is approved by an owner.
-    /// @param owner The address of the owner who approved the transaction.
-    /// @param executor The address that executed the transaction.
-    /// @param txHash The hash of the approved transaction.
+    /// @notice `owner` approved `txHash`; `executor` is the account that registered the approval
+    /// (the owner itself, or the caller submitting a delegated approval).
     event TxApproved(address indexed owner, address indexed executor, bytes32 txHash);
 
-    /// @notice Emitted when a transaction approval is revoked by an owner.
-    /// @param owner The address of the owner who revoked the approval.
-    /// @param txHash The hash of the revoked transaction.
+    /// @notice `owner` revoked its approval of `txHash`.
     event TxRevoked(address indexed owner, bytes32 txHash);
 
-    /// @notice Emitted when the list of owners is updated.
-    /// @param owners The new array of owner addresses after the update.
-    /// @param ownersVersion The owners version after the update.
+    /// @notice The owner set was replaced by `owners`, moving to version `ownersVersion`.
     event OwnersUpdated(address[] owners, uint256 ownersVersion);
 
-    /// @notice Emitted when a transaction is successfully executed.
-    /// @param caller The address that invoked the transaction execution.
-    /// @param txHash The hash of the executed transaction.
-    /// @param txNonce The tx nonce of the transaction.
+    /// @notice A batch was executed by `caller` at transaction nonce `txNonce`.
     event TxExecuted(address indexed caller, bytes32 txHash, uint256 txNonce);
 }

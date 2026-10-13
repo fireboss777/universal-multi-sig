@@ -2,37 +2,37 @@
 pragma solidity ^0.8.0;
 
 interface IUniversalMultiSigErrors {
-    /// @notice Error thrown when the number of owners provided is invalid.
+    /// @notice The provided owner count is below `MIN_OWNER_COUNT`.
     error InvalidOwnersCount();
 
-    /// @notice Error thrown when an address that is not an owner is referenced.
+    /// @notice An owner address is zero, this contract, or already an owner.
     error InvalidOwner();
 
-    /// @notice Error thrown when an delegated approval is invalid.
+    /// @notice A delegated approval signature is invalid for the claimed owner.
     error InvalidSignature();
 
-    /// @notice Error thrown when attempting to approve a transaction that is already approved.
+    /// @notice The owner has already approved this transaction.
     error AlreadyApproved();
 
-    /// @notice Error thrown when attempting to revoke approval of a transaction that is not approved.
+    /// @notice The caller has no approval to revoke for this transaction.
     error NotApproved();
 
-    /// @notice Error thrown when a transaction is attempted with an invalid target address.
+    /// @notice A batch target is the zero address.
     error InvalidTarget();
 
-    /// @notice Error thrown when a caller is not authorized to perform an action.
+    /// @notice The caller is not authorized to perform this action.
     error UnauthorizedCaller();
 
-    /// @notice Error thrown when a transaction is not authorized for execution.
+    /// @notice The transaction has not reached the approval threshold.
     error UnauthorizedTx();
 
-    /// @notice Error thrown when a transaction fails to execute, with a reason indicating why it failed.
-    /// @param reason The reason for the failure as a bytes value.
+    /// @notice A call in the batch reverted.
+    /// @param reason The revert data of the failed call.
     error TxFailed(bytes reason);
 
-    /// @notice Error thrown when the arguments provided to a function are invalid.
+    /// @notice Batch arrays are empty or have mismatched lengths.
     error InvalidArguments();
 
-    /// @notice Error thrown when trying to set an address as an owner that is already an owner.
+    /// @notice The address is already an owner of the current version.
     error AlreadyOwner();
 }

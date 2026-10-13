@@ -24,49 +24,33 @@ contract UniversalMultiSig is IUniversalMultiSig, ERC1155Holder, IERC721Receiver
     /*                               STATE VARIABLES                              */
     /* -------------------------------------------------------------------------- */
 
-    /// @notice A mapping that tracks whether a given owner is recognized in the multi-signature wallet.
-    /// @dev The mapping uses a bytes32 key (typically a hash of the owner's address) to indicate
-    /// if the corresponding address is an owner (true) or not (false).
+    /// @notice Whether an address is an owner, keyed by (owner, owners version).
     mapping(bytes32 => bool) internal _isOwner;
 
-    /// @notice A mapping that tracks whether a specific transaction has been approved by any owner.
-    /// @dev Keys are scoped by owners version: an ownership update implicitly revokes every
-    /// approval made under previous versions, as the old version entries are never read again.
+    /// @notice Whether an owner has approved a transaction, keyed by (owners version, (txHash, owner)).
+    /// @dev Scoped by owners version: an ownership update voids every prior approval.
     mapping(uint256 => mapping(bytes32 => bool)) internal _isOwnerTxApproved;
 
-    /// @notice A mapping that counts the number of approvals for each transaction hash.
-    /// @dev Keys are scoped by owners version, see `_isOwnerTxApproved`.
+    /// @notice Number of approvals per transaction hash, keyed by (owners version, txHash).
     mapping(uint256 => mapping(bytes32 => uint256)) internal _ownersTxApprovalsCount;
 
-    /// @notice A mapping that maintains a delegation nonce for each owner address.
-    /// @dev This mapping tracks the number of times an owner has delegated their authority.
-    /// Each owner’s delegation nonce prevents replay attacks on delegated signatures.
+    /// @notice Per-owner nonce mixed into delegated approval digests to prevent replays.
     mapping(address => uint256) internal _ownerDelegationNonce;
 
-    /// @notice A version number that increments whenever the list of owners is updated.
-    /// @dev This variable helps track changes to the ownership structure over time, providing
-    /// information about the current version of the owners.
+    /// @notice Incremented on every ownership update; scopes all approval state.
     uint256 internal _ownersVersion;
 
-    /// @notice The total count of current owners in the multi-signature wallet.
-    /// @dev This variable records how many active owners are authorized to approve transactions
-    /// within the wallet.
+    /// @notice Current number of owners.
     uint256 internal _ownersCount;
 
-    /// @notice A nonce that tracks the number of transactions initiated by the wallet.
-    /// @dev This variable ensures that each transaction is unique and is used to prevent
-    /// replay attacks, making it vital for the integrity of the wallet's transaction mechanism.
+    /// @notice Incremented on every executed transaction; binds approvals to a given batch.
     uint256 internal _txNonce;
 
     /* -------------------------------------------------------------------------- */
     /*                                  MODIFIER                                  */
     /* -------------------------------------------------------------------------- */
 
-    /// @notice Modifier that restricts function access to contract owners only.
-    /// @dev This modifier checks if the caller of the function is an owner of the contract.
-    /// If the caller is not an owner, it reverts the transaction with an `UnauthorizedCaller` error.
-    /// Functions using this modifier will enforce ownership checks and ensure that only designated owners
-    /// can execute certain actions.
+    /// @notice Reverts with `UnauthorizedCaller` unless the caller is an owner.
     modifier onlyOwners() {
         if (!isOwner(msg.sender)) {
             revert UnauthorizedCaller();
@@ -78,13 +62,8 @@ contract UniversalMultiSig is IUniversalMultiSig, ERC1155Holder, IERC721Receiver
     /*                                 CONSTRUCTOR                                */
     /* -------------------------------------------------------------------------- */
 
-    /// @notice Constructor of the UniversalMultiSig contract and initializes the owners.
-    /// @param owners An array of addresses that represent the owners of the multisig contract.
-    /// @dev This constructor requires a minimum number of owners as defined by the `MIN_OWNER_COUNT`.
-    /// It checks that the provided owners array is not empty, that none of the addresses are zero,
-    /// and that the contract itself is not set as an owner.
-    /// If the validation checks fail, it reverts the transaction with the respective error.
-    /// Finally, it registers the provided owners under version 0 and emits the `OwnersUpdated` event.
+    /// @notice Sets the initial owner set (owners version 0).
+    /// @dev Owners must be unique, non-zero, and cannot be this contract.
     constructor(address[] memory owners) EIP712("UniversalMultiSig", "1") {
         if (owners.length < MIN_OWNER_COUNT) {
             revert InvalidOwnersCount();
@@ -113,10 +92,7 @@ contract UniversalMultiSig is IUniversalMultiSig, ERC1155Holder, IERC721Receiver
         emit OwnersUpdated(owners, 0);
     }
 
-    /// @notice This function is invoked when the contract receives Ether.
-    /// @dev Allows the contract to accept plain Ether transfers without any data.
-    /// Any incoming Ether sent to the contract will be received and added
-    /// to the contract's balance.
+    /// @notice Accepts plain ETH transfers.
     receive() external payable { }
 
     /* -------------------------------------------------------------------------- */
@@ -189,7 +165,6 @@ contract UniversalMultiSig is IUniversalMultiSig, ERC1155Holder, IERC721Receiver
         bytes[] calldata datas,
         bytes[] calldata delegations
     ) external payable onlyOwners returns (bytes32 txHash_) {
-        // Check transactions datas length
         if (
             targets.length == 0 || targets.length != values.length || targets.length != datas.length
         ) {
@@ -200,21 +175,18 @@ contract UniversalMultiSig is IUniversalMultiSig, ERC1155Holder, IERC721Receiver
 
         txHash_ = getTxHash(targets, values, datas, txNonce);
 
-        // Check if approval delegations are included
         if (delegations.length > 0) {
             _registerDelegatedApprovals(txHash_, delegations);
         }
 
-        // Check if the transaction is authorized
         if (!isAuthorizedTx(txHash_)) {
             revert UnauthorizedTx();
         }
 
-        // Effects before interactions: consume the nonce so a reentrant call made from a
-        // target cannot recompute the same txHash and replay the recorded approvals.
+        // Consume the nonce before the external calls: a reentrant call would recompute
+        // a different txHash and find no approvals.
         _txNonce = txNonce + 1;
 
-        // Executes the transaction
         for (uint256 i; i < targets.length;) {
             if (targets[i] == address(0)) {
                 revert InvalidTarget();
@@ -292,8 +264,8 @@ contract UniversalMultiSig is IUniversalMultiSig, ERC1155Holder, IERC721Receiver
     function isOwnerTxApproved(bytes32 txHash, address owner) external view returns (bool) {
         return _isOwnerTxApproved[_ownersVersion][_getOwnerTxApprovalHash(txHash, owner)];
     }
-    /// @inheritdoc IUniversalMultiSig
 
+    /// @inheritdoc IUniversalMultiSig
     function domainSeparatorV4() external view returns (bytes32) {
         return _domainSeparatorV4();
     }
@@ -311,21 +283,12 @@ contract UniversalMultiSig is IUniversalMultiSig, ERC1155Holder, IERC721Receiver
     /*                             INTERNAL FUNCTIONS                             */
     /* -------------------------------------------------------------------------- */
 
-    /// @notice Registers delegated approvals for a given transaction.
-    /// @dev This internal function processes an array of delegated signatures for a specific transaction hash.
-    /// It allows owners of the contract to approve transactions via delegated signatures, providing increased
-    /// flexibility in managing approvals. The function performs the following steps:
-    ///
-    /// 1. Iterates through each delegation provided in the `delegations` array.
-    /// 2. Decodes each delegation into an owner's address and a corresponding signature.
-    /// 3. Hashes the approval data into a digest format appropriate for EIP-712 using the `_hashTypedDataV4` method.
-    /// 4. Validates the signature against the claimed owner using `SignatureChecker`, which supports
-    /// both EOA owners (ECDSA) and contract owners (ERC-1271 `isValidSignature`).
-    /// 5. Checks that the claimed owner is an owner of the contract.
-    /// 6. If both conditions are satisfied, it calls `_approveTx` to register the transaction approval and increments the nonce for the owner.
-    ///
-    /// @param txHash The hash of the transaction for which approvals are being registered.
-    /// @param delegations An array of encoded delegations containing pairs of owner addresses and signatures.
+    /// @notice Registers approvals from EIP-712 delegated signatures.
+    /// @dev Each delegation is an abi-encoded `(address owner, bytes signature)` pair, signed over
+    /// the `DelegatedApproval` digest bound to `msg.sender` and the owner's delegation nonce.
+    /// Signatures are validated via `SignatureChecker`: ECDSA for EOA owners, ERC-1271 for contract owners.
+    /// @param txHash The transaction being approved.
+    /// @param delegations Encoded `(owner, signature)` pairs.
     function _registerDelegatedApprovals(bytes32 txHash, bytes[] calldata delegations) internal {
         for (uint256 i; i < delegations.length;) {
             (address owner, bytes memory signature) = abi.decode(delegations[i], (address, bytes));
@@ -354,17 +317,10 @@ contract UniversalMultiSig is IUniversalMultiSig, ERC1155Holder, IERC721Receiver
         }
     }
 
-    /// @notice Approves a transaction for a given transaction hash by a specified owner.
-    /// @dev This internal function is responsible for recording approvals of a transaction.
-    /// It first checks if the transaction has already been approved by the given owner using the
-    /// `getTxApprovalsData` function. If the transaction has already been approved, it reverts with the
-    /// `AlreadyApproved` error.
-    ///
-    /// If the transaction has not yet been approved, the function adds the owner's address to the list
-    /// of approvers for that transaction hash and emits a `TxApproved` event.
-    ///
-    /// @param txHash The hash of the transaction to be approved.
-    /// @param owner The address of the owner approving the transaction.
+    /// @notice Records `owner`'s approval of `txHash` under the current owners version.
+    /// @dev Reverts with `AlreadyApproved` if `owner` has already approved this transaction.
+    /// @param txHash The transaction being approved.
+    /// @param owner The owner granting the approval.
     function _approveTx(bytes32 txHash, address owner) internal {
         uint256 version = _ownersVersion;
         bytes32 ownerTxApprovalHash = _getOwnerTxApprovalHash(txHash, owner);
@@ -380,26 +336,12 @@ contract UniversalMultiSig is IUniversalMultiSig, ERC1155Holder, IERC721Receiver
         emit TxApproved(owner, msg.sender, txHash);
     }
 
-    /// @notice Calculates the hash of an owner address and its corresponding version.
-    /// @dev This internal function takes an owner's address and a version number as input,
-    /// and returns a bytes32 hash. The hash is generated using the keccak256 hashing algorithm
-    /// combined with ABI encoding of the owner's address and version. This is useful for verifying
-    /// ownership details in scenarios such as signatures and approvals.
-    /// @param owner The address of the owner whose hash is being calculated.
-    /// @param ownerVersion The current owners version number.
-    /// @return A bytes32 value representing the hashed output of the owner's address and version.
+    /// @notice Keys an owner in `_isOwner` by address and owners version.
     function _getOwnerHash(address owner, uint256 ownerVersion) internal pure returns (bytes32) {
         return keccak256(abi.encode(owner, ownerVersion));
     }
 
-    /// @notice Calculates the hash of a transaction approval for a specific owner.
-    /// @dev This internal function takes a transaction hash and an owner's address as inputs,
-    /// and returns a bytes32 hash. The hash is generated using the keccak256 hashing algorithm
-    /// combined with ABI encoding of the transaction hash and the owner's address. This is useful
-    /// for verifying approvals of transactions by owners in a multi-signature setup.
-    /// @param txHash The bytes32 hash of the transaction that is being approved.
-    /// @param owner The address of the owner approving the transaction.
-    /// @return A bytes32 value representing the hashed output of the transaction hash and owner address.
+    /// @notice Keys a per-owner approval in `_isOwnerTxApproved`.
     function _getOwnerTxApprovalHash(bytes32 txHash, address owner)
         internal
         pure
