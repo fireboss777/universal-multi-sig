@@ -69,7 +69,7 @@ contract UniversalMultiSig is IUniversalMultiSig, ERC1155Holder, IERC721Receiver
             revert InvalidOwnersCount();
         }
 
-        for (uint256 i; i < owners.length;) {
+        for (uint256 i; i < owners.length; ++i) {
             if (owners[i] == address(0) || owners[i] == address(this)) {
                 revert InvalidOwner();
             }
@@ -81,10 +81,6 @@ contract UniversalMultiSig is IUniversalMultiSig, ERC1155Holder, IERC721Receiver
             }
 
             _isOwner[ownerHash] = true;
-
-            unchecked {
-                ++i;
-            }
         }
 
         _ownersCount = owners.length;
@@ -134,7 +130,7 @@ contract UniversalMultiSig is IUniversalMultiSig, ERC1155Holder, IERC721Receiver
 
         uint256 version = _ownersVersion + 1;
 
-        for (uint256 i; i < owners.length;) {
+        for (uint256 i; i < owners.length; ++i) {
             if (owners[i] == address(0) || owners[i] == address(this)) {
                 revert InvalidOwner();
             }
@@ -146,10 +142,6 @@ contract UniversalMultiSig is IUniversalMultiSig, ERC1155Holder, IERC721Receiver
             }
 
             _isOwner[ownerHash] = true;
-
-            unchecked {
-                ++i;
-            }
         }
 
         _ownersVersion = version;
@@ -187,17 +179,13 @@ contract UniversalMultiSig is IUniversalMultiSig, ERC1155Holder, IERC721Receiver
         // a different txHash and find no approvals.
         _txNonce = txNonce + 1;
 
-        for (uint256 i; i < targets.length;) {
+        for (uint256 i; i < targets.length; ++i) {
             if (targets[i] == address(0)) {
                 revert InvalidTarget();
             }
             (bool success, bytes memory reason) = targets[i].call{ value: values[i] }(datas[i]);
             if (!success) {
                 revert TxFailed(reason);
-            }
-
-            unchecked {
-                ++i;
             }
         }
 
@@ -290,7 +278,7 @@ contract UniversalMultiSig is IUniversalMultiSig, ERC1155Holder, IERC721Receiver
     /// @param txHash The transaction being approved.
     /// @param delegations Encoded `(owner, signature)` pairs.
     function _registerDelegatedApprovals(bytes32 txHash, bytes[] calldata delegations) internal {
-        for (uint256 i; i < delegations.length;) {
+        for (uint256 i; i < delegations.length; ++i) {
             (address owner, bytes memory signature) = abi.decode(delegations[i], (address, bytes));
             bytes32 digest = _hashTypedDataV4(
                 keccak256(
@@ -309,10 +297,6 @@ contract UniversalMultiSig is IUniversalMultiSig, ERC1155Holder, IERC721Receiver
                 _ownerDelegationNonce[owner] += 1;
             } else {
                 revert InvalidSignature();
-            }
-
-            unchecked {
-                ++i;
             }
         }
     }
