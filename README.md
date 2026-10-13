@@ -1,5 +1,11 @@
 # Universal Multi-Signature Wallet
 
+[![CI](https://img.shields.io/github/actions/workflow/status/fireboss777/universal-multi-sig/test.yml?branch=main&label=CI&style=flat-square)](https://github.com/fireboss777/universal-multi-sig/actions/workflows/test.yml)
+[![Coverage](https://img.shields.io/badge/coverage-100%25-brightgreen.svg?style=flat-square)](https://github.com/fireboss777/universal-multi-sig/actions/workflows/test.yml)
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg?style=flat-square)](./LICENSE)
+[![Solidity](https://img.shields.io/badge/Solidity-%5E0.8.28-363636.svg?style=flat-square)](https://docs.soliditylang.org/)
+[![Foundry](https://img.shields.io/badge/built%20with-Foundry-000000.svg?style=flat-square)](https://getfoundry.sh/)
+
 ## Overview
 
 The Universal Multi-Sig contract is a secure multi-signature wallet implementation that operates on the Ethereum blockchain. This contract allows multiple owners to manage funds, approve transactions, and delegate approvals, ensuring that no single owner can unilaterally control the wallet's assets. It employs a structured approach to governance with clear rules and mechanisms for transaction approval.
