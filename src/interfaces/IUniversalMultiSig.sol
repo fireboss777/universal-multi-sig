@@ -23,6 +23,8 @@ interface IUniversalMultiSig is IUniversalMultiSigErrors, IUniversalMultiSigEven
     /// - address executor: The address that will execute the transaction.
     /// - uint256 nonce: A unique identifier to prevent replay attacks.
     ///   This can be retrieved using the `getNonce(address owner)` function.
+    /// The signature is validated against the claimed owner: EOA owners sign the EIP-712 digest
+    /// with ECDSA, while contract owners must validate it through ERC-1271 `isValidSignature`.
     function DELEGATED_APPROVAL_STRUCT_HASH() external pure returns (bytes32);
 
     /* -------------------------------------------------------------------------- */

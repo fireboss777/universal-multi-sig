@@ -7,7 +7,7 @@ The Universal Multi-Sig contract is a secure multi-signature wallet implementati
 ## Features
 
 - **Multi-Signature Approval**: Requires consensus from multiple owners to approve and execute transactions.
-- **Delegated Approvals**: Owners can delegate their approval rights to others, allowing flexibility in managing approvals.
+- **Delegated Approvals**: Owners can delegate their approval rights to others, allowing flexibility in managing approvals. Delegated signatures are validated via `SignatureChecker`, supporting both EOA owners (ECDSA) and contract owners (ERC-1271).
 - **Reversible Transaction Approval**: Owners can revoke their approval for a specific transaction.
 - **Secure Ownership Management**: Only recognized owners can execute transactions or modify ownership. The contract itself (`address(this)`) can never be set as an owner.
 - **Version-Scoped Approvals**: Transaction approvals are scoped to the owners version that granted them. Any ownership update implicitly revokes every pending approval; the new owners must re-approve from scratch.

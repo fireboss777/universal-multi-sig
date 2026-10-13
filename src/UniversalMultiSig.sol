@@ -4,7 +4,7 @@ pragma solidity ^0.8.28;
 import { ERC1155Holder } from "@openzeppelin/contracts/token/ERC1155/utils/ERC1155Holder.sol";
 import { IERC721Receiver } from "@openzeppelin/contracts/token/ERC721/IERC721Receiver.sol";
 import { EIP712 } from "@openzeppelin/contracts/utils/cryptography/EIP712.sol";
-import { ECDSA } from "@openzeppelin/contracts/utils/cryptography/ECDSA.sol";
+import { SignatureChecker } from "@openzeppelin/contracts/utils/cryptography/SignatureChecker.sol";
 
 import { IUniversalMultiSig } from "./interfaces/IUniversalMultiSig.sol";
 
@@ -319,8 +319,9 @@ contract UniversalMultiSig is IUniversalMultiSig, ERC1155Holder, IERC721Receiver
     /// 1. Iterates through each delegation provided in the `delegations` array.
     /// 2. Decodes each delegation into an owner's address and a corresponding signature.
     /// 3. Hashes the approval data into a digest format appropriate for EIP-712 using the `_hashTypedDataV4` method.
-    /// 4. Recovers the signer address from the provided signature using ECDSA.
-    /// 5. Checks if the recovered signer is not the `msg.sender` (the function caller) and if the signer is an owner of the contract.
+    /// 4. Validates the signature against the claimed owner using `SignatureChecker`, which supports
+    /// both EOA owners (ECDSA) and contract owners (ERC-1271 `isValidSignature`).
+    /// 5. Checks that the claimed owner is an owner of the contract.
     /// 6. If both conditions are satisfied, it calls `_approveTx` to register the transaction approval and increments the nonce for the owner.
     ///
     /// @param txHash The hash of the transaction for which approvals are being registered.
@@ -339,9 +340,8 @@ contract UniversalMultiSig is IUniversalMultiSig, ERC1155Holder, IERC721Receiver
                     )
                 )
             );
-            address signer = ECDSA.recover(digest, signature);
 
-            if (signer == owner && isOwner(signer)) {
+            if (SignatureChecker.isValidSignatureNow(owner, digest, signature) && isOwner(owner)) {
                 _approveTx(txHash, owner);
                 _ownerDelegationNonce[owner] += 1;
             } else {

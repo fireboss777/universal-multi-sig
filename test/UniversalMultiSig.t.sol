@@ -3,6 +3,7 @@ pragma solidity ^0.8.0;
 
 import { MessageHashUtils } from "@openzeppelin/contracts/utils/cryptography/MessageHashUtils.sol";
 import { IERC721Receiver } from "@openzeppelin/contracts/token/ERC721/IERC721Receiver.sol";
+import { IERC1271 } from "@openzeppelin/contracts/interfaces/IERC1271.sol";
 
 import { UniversalMultiSig } from "../src/UniversalMultiSig.sol";
 import { IUniversalMultiSigEvents as Events } from "../src/interfaces/IUniversalMultiSig.sol";
@@ -10,6 +11,21 @@ import { IUniversalMultiSigErrors as Errors } from "../src/interfaces/IUniversal
 
 import { UniversalMultiSigFixture } from "./utils/Fixture.sol";
 import { UniversalMultiSigHandler } from "./utils/Handler.sol";
+
+contract ERC1271Owner {
+    mapping(bytes32 => bool) public approvedDigests;
+
+    function approveDigest(bytes32 digest) external {
+        approvedDigests[digest] = true;
+    }
+
+    function isValidSignature(bytes32 digest, bytes calldata) external view returns (bytes4) {
+        if (approvedDigests[digest]) {
+            return IERC1271.isValidSignature.selector;
+        }
+        return 0xffffffff;
+    }
+}
 
 contract ReentrantOwner {
     UniversalMultiSig public multisig;
@@ -658,6 +674,84 @@ contract UniversalMultiSigTest is UniversalMultiSigFixture {
 
         assertEq(multisig.getTxNonce(), txNonce + 1);
         assertEq(address(this).balance, balanceBefore + BASE_AMOUNT);
+    }
+
+    function test_universalTxWithDelegationERC1271() external {
+        ERC1271Owner contractOwner = new ERC1271Owner();
+
+        address[] memory owners = new address[](3);
+        owners[0] = USER_1;
+        owners[1] = USER_2;
+        owners[2] = address(contractOwner);
+
+        UniversalMultiSigHandler localMultisig = new UniversalMultiSigHandler(owners);
+        vm.deal(address(localMultisig), BASE_AMOUNT);
+
+        (address[] memory targets, uint256[] memory values, bytes[] memory datas) =
+            _getTransferEthTx(address(this), BASE_AMOUNT);
+
+        bytes32 txHash = localMultisig.getTxHash(targets, values, datas, localMultisig.getTxNonce());
+
+        // USER_1 approves directly, the contract owner delegates via ERC-1271 (2/3)
+        vm.prank(USER_1);
+        localMultisig.approveTx(txHash);
+
+        bytes32 structHash = keccak256(
+            abi.encode(
+                localMultisig.DELEGATED_APPROVAL_STRUCT_HASH(),
+                address(contractOwner),
+                txHash,
+                USER_1,
+                localMultisig.getOwnerDelegationNonce(address(contractOwner))
+            )
+        );
+        bytes32 digest =
+            MessageHashUtils.toTypedDataHash(localMultisig.domainSeparatorV4(), structHash);
+
+        contractOwner.approveDigest(digest);
+
+        bytes[] memory delegationList = new bytes[](1);
+        delegationList[0] = abi.encode(address(contractOwner), bytes("ignored-by-erc1271"));
+
+        uint256 balanceBefore = address(this).balance;
+
+        vm.prank(USER_1);
+        vm.expectEmit();
+        emit Events.TxApproved(address(contractOwner), USER_1, txHash);
+        vm.expectEmit();
+        emit Events.TxExecuted(USER_1, txHash, 0);
+        localMultisig.universalTx(targets, values, datas, delegationList);
+
+        assertEq(address(this).balance, balanceBefore + BASE_AMOUNT);
+        assertEq(localMultisig.getTxNonce(), 1);
+        assertEq(localMultisig.getOwnerDelegationNonce(address(contractOwner)), 1);
+    }
+
+    function test_RevertWhen_universalTxInvalidSignatureERC1271() external {
+        ERC1271Owner contractOwner = new ERC1271Owner();
+
+        address[] memory owners = new address[](3);
+        owners[0] = USER_1;
+        owners[1] = USER_2;
+        owners[2] = address(contractOwner);
+
+        UniversalMultiSigHandler localMultisig = new UniversalMultiSigHandler(owners);
+
+        (address[] memory targets, uint256[] memory values, bytes[] memory datas) =
+            _getTransferEthTx(address(this), BASE_AMOUNT);
+
+        bytes32 txHash = localMultisig.getTxHash(targets, values, datas, localMultisig.getTxNonce());
+
+        vm.prank(USER_1);
+        localMultisig.approveTx(txHash);
+
+        // The contract owner never approved the digest: isValidSignature returns a wrong magic value.
+        bytes[] memory delegationList = new bytes[](1);
+        delegationList[0] = abi.encode(address(contractOwner), bytes("ignored-by-erc1271"));
+
+        vm.prank(USER_1);
+        vm.expectRevert(Errors.InvalidSignature.selector);
+        localMultisig.universalTx(targets, values, datas, delegationList);
     }
 
     function test_RevertWhen_universalTxInvalidSignature() external {
