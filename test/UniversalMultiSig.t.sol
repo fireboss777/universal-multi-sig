@@ -27,6 +27,32 @@ contract ERC1271Owner {
     }
 }
 
+contract ERC1271ReentrantOwner {
+    UniversalMultiSig public multisig;
+    bytes public payload;
+
+    receive() external payable { }
+
+    function setMultisig(UniversalMultiSig multisig_) external {
+        multisig = multisig_;
+    }
+
+    function setPayload(bytes memory payload_) external {
+        payload = payload_;
+    }
+
+    function isValidSignature(bytes32, bytes calldata) external returns (bytes4) {
+        // Reenter universalTx while the delegated approval is being validated.
+        // A successful reentrant execution means the batch ran twice; surface it
+        // as a failed signature so the outer call reverts loudly instead.
+        (bool success,) = address(multisig).call(payload);
+        if (success) {
+            revert("reentrancy succeeded");
+        }
+        return IERC1271.isValidSignature.selector;
+    }
+}
+
 contract ReentrantOwner {
     UniversalMultiSig public multisig;
     bytes public payload;
@@ -639,6 +665,58 @@ contract UniversalMultiSigTest is UniversalMultiSigFixture {
             keccak256(attacker.reentrancyError()),
             keccak256(abi.encodeWithSelector(Errors.UnauthorizedTx.selector))
         );
+
+        // Funds moved exactly once and the nonce advanced once.
+        assertEq(address(attacker).balance, balanceBefore + BASE_AMOUNT);
+        assertEq(localMultisig.getTxNonce(), txNonce + 1);
+    }
+
+    function test_universalTxBlocksERC1271Reentrancy() external {
+        ERC1271ReentrantOwner attacker = new ERC1271ReentrantOwner();
+
+        address[] memory owners = new address[](3);
+        owners[0] = USER_1;
+        owners[1] = USER_2;
+        owners[2] = address(attacker);
+
+        UniversalMultiSigHandler localMultisig = new UniversalMultiSigHandler(owners);
+        attacker.setMultisig(UniversalMultiSig(payable(address(localMultisig))));
+        vm.deal(address(localMultisig), BASE_AMOUNT);
+
+        (address[] memory targets, uint256[] memory values, bytes[] memory datas) =
+            _getTransferEthTx(address(attacker), BASE_AMOUNT);
+
+        uint256 txNonce = localMultisig.getTxNonce();
+        bytes32 txHash = localMultisig.getTxHash(targets, values, datas, txNonce);
+
+        // Pre-approve so txHash is already authorized while isValidSignature runs:
+        // the reentrant replay would otherwise die on UnauthorizedTx and prove nothing.
+        vm.prank(USER_1);
+        localMultisig.approveTx(txHash);
+        vm.prank(USER_2);
+        localMultisig.approveTx(txHash);
+        assertTrue(localMultisig.isAuthorizedTx(txHash));
+
+        attacker.setPayload(
+            abi.encodeWithSignature(
+                "universalTx(address[],uint256[],bytes[],bytes[])",
+                targets,
+                values,
+                datas,
+                new bytes[](0)
+            )
+        );
+
+        bytes[] memory delegationList = new bytes[](1);
+        delegationList[0] = abi.encode(address(attacker), bytes("checked-by-erc1271"));
+
+        uint256 balanceBefore = address(attacker).balance;
+
+        // Signature validation cannot execute the batch a second time: the nonce
+        // is consumed before _registerDelegatedApprovals, so the replayed payload
+        // hashes differently, and the static ERC-1271 call forbids state writes.
+        vm.prank(USER_1);
+        localMultisig.universalTx(targets, values, datas, delegationList);
 
         // Funds moved exactly once and the nonce advanced once.
         assertEq(address(attacker).balance, balanceBefore + BASE_AMOUNT);

@@ -167,6 +167,12 @@ contract UniversalMultiSig is IUniversalMultiSig, ERC1155Holder, IERC721Receiver
 
         txHash_ = getTxHash(targets, values, datas, txNonce);
 
+        // Consume the nonce before any external call (ERC-1271 validation and the
+        // payload calls): a reentrant call would recompute a different txHash and
+        // find no approvals. The bump reverts atomically with the transaction if
+        // validation or authorization fails below.
+        _txNonce = txNonce + 1;
+
         if (delegations.length > 0) {
             _registerDelegatedApprovals(txHash_, delegations);
         }
@@ -174,10 +180,6 @@ contract UniversalMultiSig is IUniversalMultiSig, ERC1155Holder, IERC721Receiver
         if (!isAuthorizedTx(txHash_)) {
             revert UnauthorizedTx();
         }
-
-        // Consume the nonce before the external calls: a reentrant call would recompute
-        // a different txHash and find no approvals.
-        _txNonce = txNonce + 1;
 
         for (uint256 i; i < targets.length; ++i) {
             if (targets[i] == address(0)) {
