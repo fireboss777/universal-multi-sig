@@ -2,6 +2,7 @@
 
 [![CI](https://img.shields.io/github/actions/workflow/status/fireboss777/universal-multi-sig/test.yml?branch=main&label=CI&style=flat-square)](https://github.com/fireboss777/universal-multi-sig/actions/workflows/test.yml)
 [![Coverage](https://img.shields.io/badge/coverage-100%25-brightgreen.svg?style=flat-square)](https://github.com/fireboss777/universal-multi-sig/actions/workflows/test.yml)
+[![Certora](https://img.shields.io/badge/Certora-19%2F19-brightgreen.svg?style=flat-square)](./certora/specs/UniversalMultiSig.spec)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg?style=flat-square)](./LICENSE)
 [![Solidity](https://img.shields.io/badge/Solidity-%5E0.8.28-363636.svg?style=flat-square)](https://docs.soliditylang.org/)
 [![Foundry](https://img.shields.io/badge/built%20with-Foundry-000000.svg?style=flat-square)](https://getfoundry.sh/)
