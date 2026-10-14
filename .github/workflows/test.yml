@@ -46,9 +46,15 @@ jobs:
           forge test -vvv
         id: test
 
+      - name: Install lcov
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y lcov
+        id: lcov
+
       - name: Run Forge coverage
         run: |
           forge coverage --report lcov
-          lcov --remove lcov.info 'script/*' 'test/*' 'dependencies/*' -o lcov.filtered.info
+          lcov --remove lcov.info 'script/*' 'test/*' 'dependencies/*' -o lcov.filtered.info --ignore-errors unused
           lcov --summary lcov.filtered.info --fail-under-lines 100
 
