@@ -146,6 +146,16 @@ contract UniversalMultiSigTest is UniversalMultiSigFixture {
         new UniversalMultiSigHandler(owners);
     }
 
+    function test_receive() external {
+        vm.deal(address(this), BASE_AMOUNT);
+        uint256 balanceBefore = address(multisig).balance;
+
+        (bool success,) = address(multisig).call{ value: BASE_AMOUNT }("");
+
+        assertTrue(success);
+        assertEq(address(multisig).balance, balanceBefore + BASE_AMOUNT);
+    }
+
     /* -------------------------------------------------------------------------- */
     /*                                 APPROVE_TX                                 */
     /* -------------------------------------------------------------------------- */
