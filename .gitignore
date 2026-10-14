@@ -18,3 +18,10 @@ docs/
 dependencies
 lcov.info
 lcov.filtered.info
+
+# Certora
+certora_out/
+.certora.internal/
+certora/**/*.log
+emv-*/
+.certora_internal
